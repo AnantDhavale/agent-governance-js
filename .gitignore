@@ -1,4 +1,5 @@
 .npm-cache/
 .npm-logs/
+.smoke-install/
 node_modules/
 *.tgz
