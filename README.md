@@ -1,10 +1,10 @@
 # agent-governance
 
-**Runtime governance for AI agents in JavaScript and Node.**
+**Cerone runtime agent governance for AI agents in JavaScript and Node.**
 
 Install it. Create an agent. Validate a real action. Get a live governance decision in minutes.
 
-This package talks to **Cerone**, powered by **AZTP (Agent Zero Trust Platform)**, and returns explicit runtime decisions before an action executes:
+This package talks to the **Cerone runtime** and returns explicit runtime decisions before an action executes:
 
 - `approved`
 - `flagged`
@@ -88,7 +88,7 @@ Hosted service terms:
 
 ## What this SDK does
 
-It is a thin Node client for the hosted Cerone / AZTP runtime. It can:
+It is a thin Node client for the hosted Cerone runtime. It can:
 
 - create root agents
 - spawn child agents
@@ -98,7 +98,7 @@ It is a thin Node client for the hosted Cerone / AZTP runtime. It can:
 - issue delegated tokens
 - verify and revoke delegated tokens
 
-The goal is to keep the client side light while identity, validation, trust, governance, and audit logic stay centralized in AZTP.
+The goal is to keep the client side light while identity, validation, trust, governance, and audit logic stay centralized in the Cerone runtime.
 
 ## Single action vs batch validation
 
@@ -205,7 +205,7 @@ Options:
 
 ## Request shape
 
-Validation requests use the AZTP-compatible shape:
+Validation requests use the Cerone runtime request shape:
 
 ```json
 {
@@ -238,5 +238,5 @@ You keep your own OpenAI, Anthropic, or other provider key and pass it directly 
 ## Notes
 
 - this package is server-side Node code
-- do not expose your Cerone/AZTP API key in browser bundles
+- do not expose your Cerone API key in browser bundles
 - for enterprise or persistent access, contact `info@homersemantics.com`
