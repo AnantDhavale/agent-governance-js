@@ -100,6 +100,44 @@ It is a thin Node client for the hosted Cerone runtime. It can:
 
 The goal is to keep the client side light while identity, validation, trust, governance, and audit logic stay centralized in the Cerone runtime.
 
+## Runtime policy and containment
+
+Cerone is also evolving into a stronger runtime policy layer, not just an
+identity and semantic-alignment layer.
+
+The current direction includes runtime detections for patterns such as:
+
+- prompt injection
+- instruction override
+- role manipulation
+- policy evasion
+- secret harvesting
+- data exfiltration
+- obfuscation and encoded payload tricks
+
+These checks are meant to complement semantic validation:
+
+- semantic alignment asks whether the action fits the declared purpose
+- runtime policy checks ask whether the action payload itself looks unsafe,
+  manipulative, evasive, or exfiltration-oriented
+
+Cerone also has an operator-controlled containment direction:
+
+- manual kill switch support
+- soft containment
+- hard containment
+
+Important:
+
+- detection does not automatically activate containment by default
+- the intended default behavior is operator-controlled, manual activation
+
+For integrators, the practical rule remains simple:
+
+- `approved` -> continue
+- `flagged` -> review or warn according to your app policy
+- `rejected` -> block execution
+
 ## Single action vs batch validation
 
 Start with `validate(...)` for a single action. Use `validateBatch([...])` only when you already have two or more validation items to send together.
@@ -234,6 +272,35 @@ The SDK sends telemetry headers including:
 Cerone governs agent behavior, not inference.
 
 You keep your own OpenAI, Anthropic, or other provider key and pass it directly to your model calls. Cerone validates the intended action and records the governance trail, but it does not sit in the middle of your model billing path.
+
+## Other SDKs
+
+Cerone now has more than one SDK surface.
+
+Current SDKs:
+
+- **Node / JavaScript SDK**
+  - package: `agent-governance`
+  - repo: [github.com/AnantDhavale/agent-governance-js](https://github.com/AnantDhavale/agent-governance-js)
+
+- **Python SDK**
+  - package: `cerone`
+  - repo: [github.com/AnantDhavale/cerone_sdk](https://github.com/AnantDhavale/cerone_sdk)
+
+The product name is **Cerone** across both SDKs.  
+The npm package uses the name `agent-governance` for discoverability.
+
+If you are building in Node:
+
+```bash
+npm install agent-governance
+```
+
+If you are building in Python:
+
+```bash
+pip install cerone
+```
 
 ## Notes
 
