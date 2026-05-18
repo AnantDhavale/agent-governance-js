@@ -10,6 +10,11 @@ Install it, create an agent, validate a real action, and get an explicit runtime
 
 The npm package name is `agent-governance` for discoverability. The product/runtime it talks to is Cerone powered by AZTP.
 
+Hosted service terms:
+
+- [TERMS_OF_SERVICE.md](https://github.com/AnantDhavale/agent-governance-js/blob/main/TERMS_OF_SERVICE.md)
+- [PRIVACY.md](https://github.com/AnantDhavale/agent-governance-js/blob/main/PRIVACY.md)
+
 ## Install
 
 ```bash
