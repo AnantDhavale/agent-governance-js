@@ -1,6 +1,6 @@
 {
   "name": "agent-governance",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cerone JavaScript SDK for agent identity, validation, governance, and delegated tokens on AZTP.",
   "type": "module",
   "main": "./src/index.js",
