@@ -1,6 +1,6 @@
 {
   "name": "agent-governance",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Cerone JavaScript SDK for runtime agent governance.",
   "type": "module",
   "main": "./src/index.js",
