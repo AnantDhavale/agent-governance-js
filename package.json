@@ -1,7 +1,7 @@
 {
   "name": "agent-governance",
   "version": "0.1.5",
-  "description": "Cerone JavaScript SDK for agent identity, validation, governance, and delegated tokens on AZTP.",
+  "description": "Cerone JavaScript SDK for runtime agent governance.",
   "type": "module",
   "main": "./src/index.js",
   "types": "./src/index.d.ts",
@@ -26,19 +26,18 @@
     "agent",
     "governance",
     "cerone",
-    "aztp",
     "security",
     "trust"
   ],
   "author": "Homer Semantics",
   "license": "SEE LICENSE IN LICENSE",
-  "homepage": "https://github.com/AnantDhavale/cerone_sdk",
+  "homepage": "https://github.com/AnantDhavale/agent-governance-js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AnantDhavale/cerone_sdk.git"
+    "url": "git+https://github.com/AnantDhavale/agent-governance-js.git"
   },
   "bugs": {
-    "url": "https://github.com/AnantDhavale/cerone_sdk/issues"
+    "url": "https://github.com/AnantDhavale/agent-governance-js/issues"
   },
   "engines": {
     "node": ">=18"
