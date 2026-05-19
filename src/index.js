@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.4";
 const SDK_NAME = "agent-governance-node-sdk";
 const DEFAULT_BASE_URL = "https://api.homersemantics.com";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -155,6 +155,7 @@ export class CeroneClient {
         ...(options.environment ? { environment: options.environment } : {}),
       },
       clientIntent: "sdk_create_agent_called",
+      allowPrivateRequest: true,
     });
 
     const certificate = response.certificate && typeof response.certificate === "object"
@@ -194,6 +195,7 @@ export class CeroneClient {
           : {}),
       },
       clientIntent: "sdk_spawn_agent_called",
+      allowPrivateRequest: true,
     });
 
     const certificate = response.certificate && typeof response.certificate === "object"
@@ -240,6 +242,7 @@ export class CeroneClient {
         action: actionPayload,
       },
       clientIntent: "sdk_validate_called",
+      allowPrivateRequest: true,
     });
     const normalized = {
       validationId: response.validation_id ?? null,
@@ -296,6 +299,7 @@ export class CeroneClient {
     const response = await this._request("POST", "/v1/validate/batch", {
       json: { validations: payload },
       clientIntent: "sdk_validate_batch_called",
+      allowPrivateRequest: true,
     });
 
     const results = Array.isArray(response.results) ? response.results : [];
@@ -318,12 +322,14 @@ export class CeroneClient {
     return this._request("GET", "/health", {
       auth: "none",
       clientIntent: "sdk_health_check_called",
+      allowPrivateRequest: true,
     });
   }
 
   async getUsage() {
     return this._request("GET", "/usage", {
       clientIntent: "sdk_get_usage_called",
+      allowPrivateRequest: true,
     });
   }
 
@@ -347,6 +353,7 @@ export class CeroneClient {
     return this._request("POST", "/v1/token/delegate", {
       json: payload,
       clientIntent: "sdk_delegate_token_called",
+      allowPrivateRequest: true,
     });
   }
 
@@ -361,6 +368,7 @@ export class CeroneClient {
         ...(options.audience ? { audience: options.audience } : {}),
       },
       clientIntent: "sdk_verify_token_called",
+      allowPrivateRequest: true,
     });
   }
 
@@ -371,6 +379,7 @@ export class CeroneClient {
     return this._request("POST", "/v1/token/revoke", {
       json: { access_token: accessToken },
       clientIntent: "sdk_revoke_token_called",
+      allowPrivateRequest: true,
     });
   }
 
@@ -393,6 +402,7 @@ export class CeroneClient {
       auth: "none",
       clientIntent: "sdk_trial_bootstrap_called",
       persistTrialToken: true,
+      allowPrivateRequest: true,
     });
 
     if (!response.trial_token || typeof response.trial_token !== "string") {
@@ -408,8 +418,12 @@ export class CeroneClient {
     const upperMethod = method.toUpperCase();
     const url = `${this.baseUrl}${endpoint}`;
     const clientIntent = options.clientIntent;
+    const allowPrivateRequest = Boolean(options.allowPrivateRequest);
     const retries = this._canRetry(upperMethod) ? this.maxRetries : 0;
     let attempt = 0;
+
+    this._warnPrivateRequestUsage(endpoint, allowPrivateRequest);
+    this._guardEmptyBatchRequest(endpoint, options.json);
 
     while (true) {
       attempt += 1;
@@ -504,6 +518,30 @@ export class CeroneClient {
 
   _canRetry(method) {
     return method === "GET" || method === "HEAD" || method === "OPTIONS" || this.retryNonIdempotent;
+  }
+
+  _guardEmptyBatchRequest(endpoint, payload) {
+    if (endpoint !== "/v1/validate/batch") {
+      return;
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return;
+    }
+    if (Array.isArray(payload.validations) && payload.validations.length === 0) {
+      throw new ValidationError(
+        "validateBatch requires at least one validation item. Use validate(...) for a single action, or validateBatch([...]) with one or more items.",
+      );
+    }
+  }
+
+  _warnPrivateRequestUsage(endpoint, allowPrivateRequest) {
+    if (allowPrivateRequest || typeof endpoint !== "string" || !endpoint.startsWith("/")) {
+      return;
+    }
+    process.emitWarning(
+      "_request() is a private method. Use the public SDK methods instead.",
+      { type: "DeprecationWarning" },
+    );
   }
 
   _shouldRetryError(error) {

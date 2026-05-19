@@ -19,7 +19,7 @@ function tempTokenPath(name) {
 
 test("exports client alias", () => {
   assert.equal(AgentGovernanceClient, CeroneClient);
-  assert.equal(VERSION_STRING, "0.1.0");
+  assert.equal(VERSION_STRING, "0.1.4");
 });
 
 test("trial bootstrap persists token and reuses it", async () => {
@@ -51,7 +51,7 @@ test("trial bootstrap persists token and reuses it", async () => {
 test("createAgent uses AZTP certificate response shape", async () => {
   globalThis.fetch = async (_url, options) => {
     assert.equal(options.headers["X-Cerone-Client-Intent"], "sdk_create_agent_called");
-    assert.equal(options.headers["User-Agent"], "agent-governance-node-sdk/0.1.0");
+    assert.equal(options.headers["User-Agent"], "agent-governance-node-sdk/0.1.4");
     return fakeResponse(200, {
       certificate: {
         agent_id: "agt_123",
@@ -104,6 +104,44 @@ test("validateBatch rejects empty payload locally", async () => {
     () => client.validateBatch([]),
     (error) => error instanceof ValidationError && /at least one validation item/.test(error.message),
   );
+});
+
+test("low-level request rejects empty batch payload locally", async () => {
+  const client = new CeroneClient({ apiKey: "sk_live_demo" });
+  globalThis.fetch = async () => {
+    throw new Error("Network call should not happen for empty batch payload");
+  };
+  const originalEmitWarning = process.emitWarning;
+  process.emitWarning = () => {};
+
+  try {
+    await assert.rejects(
+      () => client._request("POST", "/v1/validate/batch", { json: { validations: [] } }),
+      (error) => error instanceof ValidationError && /at least one validation item/.test(error.message),
+    );
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+});
+
+test("low-level request emits deprecation warning", async () => {
+  const warnings = [];
+  const originalEmitWarning = process.emitWarning;
+  process.emitWarning = (warning, options) => {
+    warnings.push({ warning, options });
+  };
+
+  try {
+    globalThis.fetch = async () => fakeResponse(200, { ok: true });
+    const client = new CeroneClient({ apiKey: "sk_live_demo" });
+    const response = await client._request("GET", "/usage");
+    assert.deepEqual(response, { ok: true });
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0].warning), /_request\(\) is a private method/);
+    assert.equal(warnings[0].options?.type, "DeprecationWarning");
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
 });
 
 test("delegateToken sends the current AZTP payload shape", async () => {
