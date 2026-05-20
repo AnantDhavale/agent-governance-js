@@ -36,15 +36,15 @@ import { CeroneClient } from "agent-governance";
 
 const client = new CeroneClient();
 
-const agent = await client.createAgent(
-  "Customer billing support",
-  ["db_read", "billing_api"],
-);
+const agent = await client.createAgentForAction("file_read", {
+  workspaceTarget: "repository files and source code",
+  environment: "development",
+});
 
 const result = await client.validate(
   agent.agentId,
-  "database_query",
-  { table: "billing", customer_id: "123" },
+  "file_read",
+  { path: "README.md" },
 );
 
 console.log("Agent:", agent.agentId);
@@ -91,6 +91,7 @@ Hosted service terms:
 It is a thin Node client for the hosted Cerone runtime. It can:
 
 - create root agents
+- create root agents from a real action with inferred purpose/capability framing
 - spawn child agents
 - validate actions
 - validate action batches
@@ -149,15 +150,15 @@ import { CeroneClient } from "agent-governance";
 
 const client = new CeroneClient();
 
-const agent = await client.createAgent(
-  "Customer billing support",
-  ["db_read", "billing_api"],
-);
+const agent = await client.createAgentForAction("file_read", {
+  workspaceTarget: "repository files and source code",
+  environment: "development",
+});
 
 const result = await client.validate(
   agent.agentId,
-  "database_query",
-  { table: "billing", customer_id: "123" },
+  "file_read",
+  { path: "README.md" },
 );
 
 console.log(result.result, result.trustScore);
@@ -222,6 +223,7 @@ Options:
 ### Agent / certificate methods
 
 - `createAgent(purpose, capabilities?, options?)`
+- `createAgentForAction(action, options?)`
 - `spawnAgent(parentId, purpose, capabilities?, options?)`
 
 ### Validation methods
@@ -256,6 +258,16 @@ Validation requests use the Cerone runtime request shape:
   }
 }
 ```
+
+Validation responses may also include:
+
+- `environmentMode`
+- `note`
+- `hint`
+- `trialWarning`
+- `trialStoploss`
+
+The SDK normalizes repeated semantic-drift wording in `violations` so application-facing error text is cleaner.
 
 ## Runtime headers
 

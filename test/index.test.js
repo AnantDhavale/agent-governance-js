@@ -11,6 +11,7 @@ import {
   RateLimitError,
   ValidationError,
   VERSION_STRING,
+  inferAgentProfileFromAction,
 } from "../src/index.js";
 
 function tempTokenPath(name) {
@@ -19,7 +20,45 @@ function tempTokenPath(name) {
 
 test("exports client alias", () => {
   assert.equal(AgentGovernanceClient, CeroneClient);
-  assert.equal(VERSION_STRING, "0.1.4");
+  assert.equal(VERSION_STRING, "0.1.7");
+});
+
+test("inferAgentProfileFromAction builds a file_read-oriented profile", () => {
+  const profile = inferAgentProfileFromAction("file_read", {
+    workspaceTarget: "repository files such as README.md",
+  });
+
+  assert.equal(profile.inferred, true);
+  assert.equal(profile.capabilities[0], "file_read");
+  assert.match(profile.purpose, /Perform file_read operations/);
+  assert.match(profile.purpose, /read files from a codebase/);
+  assert.match(profile.purpose, /repository files such as README\.md/);
+});
+
+test("createAgentForAction uses inferred purpose and minimal capabilities", async () => {
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(body.purpose.includes("Perform file_read operations"), true);
+    assert.deepEqual(body.capabilities, ["file_read"]);
+    return fakeResponse(200, {
+      certificate: {
+        agent_id: "agt_derived",
+        purpose: body.purpose,
+        capabilities: body.capabilities,
+        signature: "sig_derived",
+        issued_at: "2026-01-01T00:00:00Z",
+      },
+      trust_score: 0.91,
+    });
+  };
+
+  const client = new CeroneClient({ apiKey: "sk_live_demo" });
+  const agent = await client.createAgentForAction("file_read", {
+    workspaceTarget: "repository files such as README.md",
+    environment: "development",
+  });
+  assert.equal(agent.agentId, "agt_derived");
+  assert.deepEqual(agent.capabilities, ["file_read"]);
 });
 
 test("trial bootstrap persists token and reuses it", async () => {
@@ -51,7 +90,7 @@ test("trial bootstrap persists token and reuses it", async () => {
 test("createAgent uses AZTP certificate response shape", async () => {
   globalThis.fetch = async (_url, options) => {
     assert.equal(options.headers["X-Cerone-Client-Intent"], "sdk_create_agent_called");
-    assert.equal(options.headers["User-Agent"], "agent-governance-node-sdk/0.1.4");
+    assert.equal(options.headers["User-Agent"], "agent-governance-node-sdk/0.1.7");
     return fakeResponse(200, {
       certificate: {
         agent_id: "agt_123",
@@ -85,9 +124,12 @@ test("validate normalizes string action and parses response", async () => {
       result: "approved",
       semantic_alignment: 0.99,
       trust_score: 0.97,
-      violations: [],
+      violations: ["Semantic drift detected: Semantic drift detected: test"],
       timestamp: "2026-01-01T00:00:00Z",
       latency_ms: 42,
+      environment_mode: "development",
+      note: "Development thresholds applied.",
+      hint: "Include your tool names explicitly in your agent purpose declaration.",
     });
   };
 
@@ -96,6 +138,10 @@ test("validate normalizes string action and parses response", async () => {
   assert.equal(result.result, "approved");
   assert.equal(result.action, "database_query");
   assert.equal(result.trustScore, 0.97);
+  assert.deepEqual(result.violations, ["Semantic drift detected: test"]);
+  assert.equal(result.environmentMode, "development");
+  assert.equal(result.note, "Development thresholds applied.");
+  assert.equal(result.hint, "Include your tool names explicitly in your agent purpose declaration.");
 });
 
 test("validateBatch rejects empty payload locally", async () => {

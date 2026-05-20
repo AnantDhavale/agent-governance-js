@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const VERSION = "0.1.4";
+const VERSION = "0.1.7";
 const SDK_NAME = "agent-governance-node-sdk";
 const DEFAULT_BASE_URL = "https://api.homersemantics.com";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -86,12 +86,119 @@ function makeCacheKey(agentId, actionPayload) {
   return JSON.stringify([agentId, actionPayload.tool, actionPayload.parameters ?? {}]);
 }
 
+function normalizeToolName(toolName) {
+  return typeof toolName === "string" ? toolName.trim().toLowerCase() : "";
+}
+
+function inferCapabilityFromAction(toolName) {
+  const normalized = normalizeToolName(toolName);
+  if (normalized.startsWith("database_") || normalized.startsWith("db_")) {
+    return /(write|update|insert|delete|create)/u.test(normalized) ? "db_write" : "db_read";
+  }
+  if (normalized.startsWith("api_") || normalized.endsWith("_api")) {
+    return "api_call";
+  }
+  if (normalized.startsWith("file_")) {
+    return /(write|update|create|delete)/u.test(normalized) ? "file_write" : "file_read";
+  }
+  if (
+    normalized.includes("http") ||
+    normalized.includes("fetch") ||
+    normalized.includes("search") ||
+    normalized.includes("browse") ||
+    normalized.includes("network")
+  ) {
+    return "network_access";
+  }
+  return normalized;
+}
+
+function describeWorkspaceTarget(workspaceTarget) {
+  if (typeof workspaceTarget === "string" && workspaceTarget.trim()) {
+    return workspaceTarget.trim();
+  }
+  return "source code, configuration, and project structure";
+}
+
+function inferPurpose(requiredCapability, toolName, workspaceTarget) {
+  switch (requiredCapability) {
+    case "file_read":
+      return (
+        `Perform ${toolName} operations to read files from a codebase and inspect ${workspaceTarget} ` +
+        "for source code analysis, configuration review, debugging, and implementation planning."
+      );
+    case "file_write":
+      return (
+        `Perform ${toolName} operations to update project files within ${workspaceTarget} ` +
+        "for software engineering changes, fixes, and implementation tasks."
+      );
+    case "api_call":
+      return (
+        `Perform ${toolName} operations to call development and service APIs needed for ` +
+        "software engineering workflows, diagnostics, and implementation tasks."
+      );
+    case "network_access":
+      return (
+        `Perform ${toolName} operations to access network resources related to ${workspaceTarget} ` +
+        "for software engineering research, dependency inspection, and debugging."
+      );
+    case "db_read":
+      return (
+        `Perform ${toolName} operations to read database records needed for debugging, ` +
+        "system analysis, and software engineering investigation."
+      );
+    case "db_write":
+      return (
+        `Perform ${toolName} operations to update database records required for controlled ` +
+        "software engineering workflows and operational fixes."
+      );
+    default:
+      return (
+        `Perform ${toolName} operations to work with ${workspaceTarget} ` +
+        "for software engineering, debugging, and workflow tasks."
+      );
+  }
+}
+
+export function inferAgentProfileFromAction(action, options = {}) {
+  const actionPayload = normalizeActionPayload(action, options.parameters);
+  const toolName = actionPayload.tool;
+  const requiredCapability = inferCapabilityFromAction(toolName);
+  const capabilities = Array.isArray(options.capabilities) && options.capabilities.length > 0
+    ? options.capabilities
+    : [requiredCapability];
+  const purpose = typeof options.purpose === "string" && options.purpose.trim()
+    ? options.purpose.trim()
+    : inferPurpose(requiredCapability, toolName, describeWorkspaceTarget(options.workspaceTarget));
+
+  return {
+    purpose,
+    capabilities,
+    inferred: !(typeof options.purpose === "string" && options.purpose.trim()) &&
+      !(Array.isArray(options.capabilities) && options.capabilities.length > 0),
+    action: actionPayload,
+  };
+}
+
 function parseValidationResult(value) {
   const normalized = safeLower(value);
   if (normalized === "approved" || normalized === "flagged" || normalized === "rejected") {
     return normalized;
   }
   return "error";
+}
+
+function dedupeSemanticDrift(text) {
+  return typeof text === "string"
+    ? text.replace(/^(Semantic drift detected:\s*)(Semantic drift detected:\s*)+/u, "$1")
+    : text;
+}
+
+function normalizeViolations(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry) => (typeof entry === "string" ? dedupeSemanticDrift(entry) : entry));
 }
 
 function normalizeActionPayload(action, parameters) {
@@ -177,6 +284,18 @@ export class CeroneClient {
     };
   }
 
+  async createAgentForAction(action, options = {}) {
+    const profile = inferAgentProfileFromAction(action, {
+      purpose: options.purpose,
+      capabilities: options.capabilities,
+      parameters: options.parameters,
+      workspaceTarget: options.workspaceTarget,
+    });
+    return this.createAgent(profile.purpose, profile.capabilities, {
+      environment: options.environment,
+    });
+  }
+
   async spawnAgent(parentId, purpose, capabilities = [], options = {}) {
     if (!parentId || typeof parentId !== "string") {
       throw new ValidationError("parentId must be a non-empty string.");
@@ -250,13 +369,16 @@ export class CeroneClient {
       result: parseValidationResult(response.result),
       semanticAlignment: Number(response.semantic_alignment ?? 0),
       trustScore: Number(response.trust_score ?? 0),
-      violations: Array.isArray(response.violations) ? response.violations : [],
+      violations: normalizeViolations(response.violations),
       checks: Array.isArray(response.checks) ? response.checks : [],
       action: actionPayload.tool,
       timestamp: response.timestamp ?? "",
       latencyMs: Number(response.latency_ms ?? (Date.now() - started)),
       trialWarning: Boolean(response.trial_warning),
       trialStoploss: Boolean(response.trial_stoploss),
+      environmentMode: typeof response.environment_mode === "string" ? response.environment_mode : undefined,
+      note: typeof response.note === "string" ? response.note : undefined,
+      hint: typeof response.hint === "string" ? response.hint : undefined,
       raw: response,
     };
 
@@ -309,11 +431,16 @@ export class CeroneClient {
       result: parseValidationResult(item.result),
       semanticAlignment: Number(item.semantic_alignment ?? 0),
       trustScore: Number(item.trust_score ?? 0),
-      violations: Array.isArray(item.violations) ? item.violations : [],
+      violations: normalizeViolations(item.violations),
       checks: Array.isArray(item.checks) ? item.checks : [],
       action: typeof item.action === "object" && item.action ? item.action.tool ?? "" : String(item.action ?? ""),
       timestamp: item.timestamp ?? "",
       latencyMs: Number(item.latency_ms ?? 0),
+      trialWarning: Boolean(item.trial_warning),
+      trialStoploss: Boolean(item.trial_stoploss),
+      environmentMode: typeof item.environment_mode === "string" ? item.environment_mode : undefined,
+      note: typeof item.note === "string" ? item.note : undefined,
+      hint: typeof item.hint === "string" ? item.hint : undefined,
       raw: item,
     }));
   }

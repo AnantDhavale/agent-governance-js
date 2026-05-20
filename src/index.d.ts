@@ -12,6 +12,13 @@ export type CeroneClientOptions = {
   trialTokenPath?: string;
 };
 
+export type InferAgentProfileOptions = {
+  purpose?: string;
+  capabilities?: string[];
+  parameters?: Record<string, unknown>;
+  workspaceTarget?: string;
+};
+
 export type AgentCertificate = {
   agentId: string;
   purpose: string;
@@ -41,6 +48,9 @@ export type ValidationResponse = {
   latencyMs: number;
   trialWarning?: boolean;
   trialStoploss?: boolean;
+  environmentMode?: string;
+  note?: string;
+  hint?: string;
   raw: Record<string, unknown>;
 };
 
@@ -59,6 +69,8 @@ export type SpawnAgentOptions = {
 export type CreateAgentOptions = {
   environment?: string;
 };
+
+export type CreateAgentForActionOptions = CreateAgentOptions & InferAgentProfileOptions;
 
 export type DelegateTokenOptions = {
   scope: string;
@@ -85,6 +97,16 @@ export declare class ValidationError extends CeroneError {}
 export declare class RateLimitError extends CeroneError {}
 export declare class NetworkError extends CeroneError {}
 
+export declare function inferAgentProfileFromAction(
+  action: string | ValidationAction,
+  options?: InferAgentProfileOptions,
+): {
+  purpose: string;
+  capabilities: string[];
+  inferred: boolean;
+  action: ValidationAction;
+};
+
 export declare class CeroneClient {
   constructor(options?: CeroneClientOptions);
   apiKey: string | null;
@@ -98,6 +120,10 @@ export declare class CeroneClient {
   trialTokenPath: string;
 
   createAgent(purpose: string, capabilities?: string[], options?: CreateAgentOptions): Promise<AgentCertificate>;
+  createAgentForAction(
+    action: string | ValidationAction,
+    options?: CreateAgentForActionOptions,
+  ): Promise<AgentCertificate>;
   spawnAgent(parentId: string, purpose: string, capabilities?: string[], options?: SpawnAgentOptions): Promise<AgentCertificate & { parentId: string }>;
   validate(agentId: string, action: string | ValidationAction, parameters?: Record<string, unknown>): Promise<ValidationResponse>;
   validateBatch(validations: BatchValidationItem[]): Promise<ValidationResponse[]>;
