@@ -1,15 +1,47 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 
-const VERSION = "0.1.7";
+const VERSION = "0.1.9";
 const SDK_NAME = "agent-governance-node-sdk";
+const SDK_RUNTIME = "node";
 const DEFAULT_BASE_URL = "https://api.homersemantics.com";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CACHE_TTL_MS = 300_000;
 const DEFAULT_CACHE_MAX_SIZE = 1_000;
 const ACCESS_URL = "https://www.homersemantics.com/ai-agent-governance-and-oauth";
+
+export const InteractionMode = Object.freeze({
+  CLIENT_LIFECYCLE: "client_lifecycle",
+  TRIAL_BOOTSTRAP: "trial_bootstrap",
+  AGENT_CREATE: "agent_create",
+  SINGLE_VALIDATION: "single_validation",
+  BATCH_VALIDATION: "batch_validation",
+  PRIVATE_REQUEST: "private_request",
+});
+
+export const TelemetryEventType = Object.freeze({
+  CLIENT_INITIALIZED: "client_initialized",
+  HOSTED_TRIAL_STARTED: "hosted_trial_started",
+  TRIAL_TOKEN_RECEIVED: "trial_token_received",
+  AGENT_CREATED: "agent_created",
+  VALIDATION_ATTEMPTED: "validation_attempted",
+  VALIDATION_RESULT_RECEIVED: "validation_result_received",
+  BATCH_VALIDATION_ATTEMPTED: "batch_validation_attempted",
+  LOCAL_ERROR: "local_error",
+});
+
+export const LocalErrorCategory = Object.freeze({
+  MISSING_TOKEN: "missing_token",
+  MISSING_AGENT_ID: "missing_agent_id",
+  EMPTY_BATCH: "empty_batch",
+  SERIALIZATION_ERROR: "serialization_error",
+  INVALID_ACTION_SHAPE: "invalid_action_shape",
+  WRAPPER_MISUSE: "wrapper_misuse",
+  UNSUPPORTED_PATH: "unsupported_path",
+});
 
 export class CeroneError extends Error {
   constructor(message, options = {}) {
@@ -34,6 +66,15 @@ export class ValidationError extends CeroneError {
   }
 }
 
+export class LocalValidationError extends ValidationError {
+  constructor(message, category, details = {}, options = {}) {
+    super(message, options);
+    this.name = "LocalValidationError";
+    this.category = category;
+    this.details = details;
+  }
+}
+
 export class RateLimitError extends CeroneError {
   constructor(message, options = {}) {
     super(message, options);
@@ -52,6 +93,10 @@ function defaultTrialTokenPath() {
   return path.join(os.homedir(), ".cerone", "trial_token");
 }
 
+function utcNowIso() {
+  return new Date().toISOString();
+}
+
 function safeLower(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
@@ -62,6 +107,14 @@ function sleep(ms) {
 
 function clone(value) {
   return value === undefined ? value : JSON.parse(JSON.stringify(value));
+}
+
+function generateClientSessionId() {
+  return `csn_${crypto.randomBytes(8).toString("hex")}`;
+}
+
+function fingerprintToken(token) {
+  return `auth_${crypto.createHash("sha256").update(String(token)).digest("hex").slice(0, 16)}`;
 }
 
 function ensureDirectoryFor(filePath) {
@@ -205,7 +258,11 @@ function normalizeActionPayload(action, parameters) {
   if (typeof action === "string") {
     const params = parameters ?? {};
     if (params && typeof params !== "object") {
-      throw new ValidationError("Action parameters must be an object.");
+      throw new LocalValidationError(
+        "Action parameters must be an object.",
+        LocalErrorCategory.INVALID_ACTION_SHAPE,
+        { action, parameters },
+      );
     }
     return {
       tool: action,
@@ -214,16 +271,28 @@ function normalizeActionPayload(action, parameters) {
   }
 
   if (!action || typeof action !== "object" || Array.isArray(action)) {
-    throw new ValidationError("Action must be a tool string or an action object.");
+    throw new LocalValidationError(
+      "Action must be a tool string or an action object.",
+      LocalErrorCategory.INVALID_ACTION_SHAPE,
+      { action },
+    );
   }
 
   const tool = action.tool;
   const params = action.parameters ?? parameters ?? {};
   if (typeof tool !== "string" || !tool.trim()) {
-    throw new ValidationError("Action object must include a non-empty tool name.");
+    throw new LocalValidationError(
+      "Action object must include a non-empty tool name.",
+      LocalErrorCategory.INVALID_ACTION_SHAPE,
+      { action },
+    );
   }
   if (params && typeof params !== "object") {
-    throw new ValidationError("Action parameters must be an object.");
+    throw new LocalValidationError(
+      "Action parameters must be an object.",
+      LocalErrorCategory.INVALID_ACTION_SHAPE,
+      { action, parameters: params },
+    );
   }
 
   const normalized = {
@@ -238,7 +307,7 @@ function normalizeActionPayload(action, parameters) {
 
 export class CeroneClient {
   constructor(options = {}) {
-    this.apiKey = options.apiKey ?? null;
+    this.apiKey = null;
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = Math.max(0, options.maxRetries ?? DEFAULT_MAX_RETRIES);
@@ -247,12 +316,34 @@ export class CeroneClient {
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
     this.cacheMaxSize = options.cacheMaxSize ?? DEFAULT_CACHE_MAX_SIZE;
     this.trialTokenPath = options.trialTokenPath ?? defaultTrialTokenPath();
+    this.integrationId = options.integrationId ?? null;
+    this.clientSessionId = options.clientSessionId ?? generateClientSessionId();
+    this.telemetryHook = typeof options.telemetryHook === "function" ? options.telemetryHook : null;
+    this.telemetryMetadata = options.telemetryMetadata && typeof options.telemetryMetadata === "object"
+      ? { ...options.telemetryMetadata }
+      : {};
+    this._authSessionId = null;
+    this._requestSequence = 0;
     this._cache = this.enableCache ? new Map() : null;
+
+    if (options.apiKey) {
+      this._applyApiKey(options.apiKey);
+    }
+
+    this._emitEvent(TelemetryEventType.CLIENT_INITIALIZED, {
+      baseUrl: this.baseUrl,
+      hasApiKey: Boolean(options.apiKey),
+      integrationId: this.integrationId,
+    });
   }
 
   async createAgent(purpose, capabilities = [], options = {}) {
     if (!purpose || typeof purpose !== "string") {
-      throw new ValidationError("Agent purpose must be a non-empty string.");
+      throw this._localError(
+        "Agent purpose must be a non-empty string.",
+        LocalErrorCategory.WRAPPER_MISUSE,
+        { purpose },
+      );
     }
 
     const response = await this._request("POST", "/v1/certificates", {
@@ -262,6 +353,7 @@ export class CeroneClient {
         ...(options.environment ? { environment: options.environment } : {}),
       },
       clientIntent: "sdk_create_agent_called",
+      interactionMode: InteractionMode.AGENT_CREATE,
       allowPrivateRequest: true,
     });
 
@@ -273,7 +365,7 @@ export class CeroneClient {
       throw new ValidationError("Missing agent_id in createAgent response.", { body: response });
     }
 
-    return {
+    const normalized = {
       agentId,
       purpose: certificate.purpose ?? purpose,
       capabilities: certificate.capabilities ?? capabilities,
@@ -282,6 +374,15 @@ export class CeroneClient {
       createdAt: certificate.issued_at ?? response.created_at ?? response.issued_at ?? "",
       raw: response,
     };
+    this._emitEvent(TelemetryEventType.AGENT_CREATED, {
+      agentId: normalized.agentId,
+      declaredPurpose: purpose,
+      declaredCapabilities: capabilities,
+      effectivePurpose: normalized.purpose,
+      effectiveCapabilities: normalized.capabilities,
+      environment: options.environment ?? null,
+    });
+    return normalized;
   }
 
   async createAgentForAction(action, options = {}) {
@@ -298,10 +399,18 @@ export class CeroneClient {
 
   async spawnAgent(parentId, purpose, capabilities = [], options = {}) {
     if (!parentId || typeof parentId !== "string") {
-      throw new ValidationError("parentId must be a non-empty string.");
+      throw this._localError(
+        "parentId must be a non-empty string.",
+        LocalErrorCategory.MISSING_AGENT_ID,
+        { parentId },
+      );
     }
     if (!purpose || typeof purpose !== "string") {
-      throw new ValidationError("Agent purpose must be a non-empty string.");
+      throw this._localError(
+        "Agent purpose must be a non-empty string.",
+        LocalErrorCategory.WRAPPER_MISUSE,
+        { purpose },
+      );
     }
 
     const response = await this._request("POST", "/v1/certificates/spawn", {
@@ -314,6 +423,7 @@ export class CeroneClient {
           : {}),
       },
       clientIntent: "sdk_spawn_agent_called",
+      interactionMode: InteractionMode.AGENT_CREATE,
       allowPrivateRequest: true,
     });
 
@@ -339,7 +449,11 @@ export class CeroneClient {
 
   async validate(agentId, action, parameters = undefined) {
     if (!agentId || typeof agentId !== "string") {
-      throw new ValidationError("agentId must be a non-empty string.");
+      throw this._localError(
+        "agentId must be a non-empty string.",
+        LocalErrorCategory.MISSING_AGENT_ID,
+        { agentId },
+      );
     }
 
     const actionPayload = normalizeActionPayload(action, parameters);
@@ -355,12 +469,19 @@ export class CeroneClient {
     }
 
     const started = Date.now();
+    this._emitEvent(TelemetryEventType.VALIDATION_ATTEMPTED, {
+      interactionMode: InteractionMode.SINGLE_VALIDATION,
+      agentId,
+      tool: actionPayload.tool,
+      capabilityHint: inferCapabilityFromAction(actionPayload.tool),
+    });
     const response = await this._request("POST", "/v1/validate", {
       json: {
         agent_id: agentId,
         action: actionPayload,
       },
       clientIntent: "sdk_validate_called",
+      interactionMode: InteractionMode.SINGLE_VALIDATION,
       allowPrivateRequest: true,
     });
     const normalized = {
@@ -391,22 +512,42 @@ export class CeroneClient {
       }
     }
 
+    this._emitEvent(TelemetryEventType.VALIDATION_RESULT_RECEIVED, {
+      interactionMode: InteractionMode.SINGLE_VALIDATION,
+      agentId,
+      tool: actionPayload.tool,
+      result: normalized.result,
+      semanticAlignment: normalized.semanticAlignment,
+      trustScore: normalized.trustScore,
+      latencyMs: normalized.latencyMs,
+    });
+
     return normalized;
   }
 
   async validateBatch(validations) {
     if (!Array.isArray(validations) || validations.length === 0) {
-      throw new ValidationError(
+      throw this._localError(
         "validateBatch requires at least one validation item. Use validate(...) for a single action, or validateBatch([...]) with one or more items.",
+        LocalErrorCategory.EMPTY_BATCH,
+        {},
       );
     }
 
     const payload = validations.map((item) => {
       if (!item || typeof item !== "object") {
-        throw new ValidationError("Each batch validation item must be an object.");
+        throw this._localError(
+          "Each batch validation item must be an object.",
+          LocalErrorCategory.INVALID_ACTION_SHAPE,
+          { item },
+        );
       }
       if (!item.agentId && !item.agent_id) {
-        throw new ValidationError("Each batch validation item must include agentId.");
+        throw this._localError(
+          "Each batch validation item must include agentId.",
+          LocalErrorCategory.MISSING_AGENT_ID,
+          { item },
+        );
       }
 
       const agentId = item.agentId ?? item.agent_id;
@@ -418,9 +559,17 @@ export class CeroneClient {
       };
     });
 
+    this._emitEvent(TelemetryEventType.BATCH_VALIDATION_ATTEMPTED, {
+      interactionMode: InteractionMode.BATCH_VALIDATION,
+      validationCount: payload.length,
+      agentIds: payload.map((item) => item.agent_id),
+      tools: payload.map((item) => item.action.tool),
+    });
+
     const response = await this._request("POST", "/v1/validate/batch", {
       json: { validations: payload },
       clientIntent: "sdk_validate_batch_called",
+      interactionMode: InteractionMode.BATCH_VALIDATION,
       allowPrivateRequest: true,
     });
 
@@ -449,6 +598,7 @@ export class CeroneClient {
     return this._request("GET", "/health", {
       auth: "none",
       clientIntent: "sdk_health_check_called",
+      interactionMode: InteractionMode.CLIENT_LIFECYCLE,
       allowPrivateRequest: true,
     });
   }
@@ -456,6 +606,7 @@ export class CeroneClient {
   async getUsage() {
     return this._request("GET", "/usage", {
       clientIntent: "sdk_get_usage_called",
+      interactionMode: InteractionMode.CLIENT_LIFECYCLE,
       allowPrivateRequest: true,
     });
   }
@@ -480,6 +631,7 @@ export class CeroneClient {
     return this._request("POST", "/v1/token/delegate", {
       json: payload,
       clientIntent: "sdk_delegate_token_called",
+      interactionMode: InteractionMode.PRIVATE_REQUEST,
       allowPrivateRequest: true,
     });
   }
@@ -495,6 +647,7 @@ export class CeroneClient {
         ...(options.audience ? { audience: options.audience } : {}),
       },
       clientIntent: "sdk_verify_token_called",
+      interactionMode: InteractionMode.PRIVATE_REQUEST,
       allowPrivateRequest: true,
     });
   }
@@ -506,6 +659,7 @@ export class CeroneClient {
     return this._request("POST", "/v1/token/revoke", {
       json: { access_token: accessToken },
       clientIntent: "sdk_revoke_token_called",
+      interactionMode: InteractionMode.PRIVATE_REQUEST,
       allowPrivateRequest: true,
     });
   }
@@ -521,23 +675,36 @@ export class CeroneClient {
 
     const persisted = readPersistedTrialToken(this.trialTokenPath);
     if (persisted) {
-      this.apiKey = persisted;
+      this._applyApiKey(persisted);
       return this.apiKey;
     }
 
+    this._emitEvent(TelemetryEventType.HOSTED_TRIAL_STARTED, {
+      endpoint: "/trial/session",
+      baseUrl: this.baseUrl,
+    });
     const response = await this._request("POST", "/trial/session", {
       auth: "none",
       clientIntent: "sdk_trial_bootstrap_called",
+      interactionMode: InteractionMode.TRIAL_BOOTSTRAP,
       persistTrialToken: true,
       allowPrivateRequest: true,
     });
 
     if (!response.trial_token || typeof response.trial_token !== "string") {
-      throw new AuthenticationError("Trial bootstrap did not return a trial token.", { body: response });
+      throw this._localError(
+        "Trial bootstrap did not return a trial token.",
+        LocalErrorCategory.MISSING_TOKEN,
+        { response },
+      );
     }
 
-    this.apiKey = response.trial_token;
+    this._applyApiKey(response.trial_token);
     persistTrialToken(this.trialTokenPath, this.apiKey);
+    this._emitEvent(TelemetryEventType.TRIAL_TOKEN_RECEIVED, {
+      endpoint: "/trial/session",
+      authSessionId: this._authSessionId,
+    });
     return this.apiKey;
   }
 
@@ -545,6 +712,7 @@ export class CeroneClient {
     const upperMethod = method.toUpperCase();
     const url = `${this.baseUrl}${endpoint}`;
     const clientIntent = options.clientIntent;
+    const interactionMode = options.interactionMode ?? InteractionMode.PRIVATE_REQUEST;
     const allowPrivateRequest = Boolean(options.allowPrivateRequest);
     const retries = this._canRetry(upperMethod) ? this.maxRetries : 0;
     let attempt = 0;
@@ -563,20 +731,46 @@ export class CeroneClient {
           "User-Agent": `${SDK_NAME}/${VERSION}`,
           "X-Cerone-SDK-Name": SDK_NAME,
           "X-Cerone-SDK-Version": VERSION,
+          "X-Cerone-Runtime": SDK_RUNTIME,
           "X-Cerone-Platform": `node-${process.platform}`,
+          "X-Cerone-Node-Version": process.versions.node,
+          "X-Cerone-Client-Session": this.clientSessionId,
+          "X-Cerone-Request-Sequence": String(this._nextRequestSequence()),
           "X-Cerone-Client-Intent": clientIntent ?? "sdk_request",
+          "X-Cerone-Interaction-Mode": interactionMode,
           ...(options.headers ?? {}),
         };
 
+        if (this.integrationId) {
+          headers["X-Cerone-Integration-Id"] = this.integrationId;
+        }
         if ((options.auth ?? "apiKey") !== "none") {
           const apiKey = await this._ensureApiKey();
           headers["X-API-Key"] = apiKey;
+          if (this._authSessionId) {
+            headers["X-Cerone-Auth-Session"] = this._authSessionId;
+          }
+        } else if (this._authSessionId) {
+          headers["X-Cerone-Auth-Session"] = this._authSessionId;
+        }
+
+        let requestBody;
+        if (options.json !== undefined) {
+          try {
+            requestBody = JSON.stringify(options.json);
+          } catch (error) {
+            throw this._localError(
+              "Request payload could not be serialized to JSON.",
+              LocalErrorCategory.SERIALIZATION_ERROR,
+              { endpoint, error: error instanceof Error ? error.message : String(error) },
+            );
+          }
         }
 
         const response = await fetch(url, {
           method: upperMethod,
           headers,
-          body: options.json === undefined ? undefined : JSON.stringify(options.json),
+          body: requestBody,
           signal: controller.signal,
         });
 
@@ -655,8 +849,10 @@ export class CeroneClient {
       return;
     }
     if (Array.isArray(payload.validations) && payload.validations.length === 0) {
-      throw new ValidationError(
+      throw this._localError(
         "validateBatch requires at least one validation item. Use validate(...) for a single action, or validateBatch([...]) with one or more items.",
+        LocalErrorCategory.EMPTY_BATCH,
+        {},
       );
     }
   }
@@ -676,6 +872,49 @@ export class CeroneClient {
       return true;
     }
     return error instanceof NetworkError && (!error.status || error.status >= 500);
+  }
+
+  _applyApiKey(token) {
+    this.apiKey = token;
+    this._authSessionId = fingerprintToken(token);
+  }
+
+  _nextRequestSequence() {
+    this._requestSequence += 1;
+    return this._requestSequence;
+  }
+
+  _emitEvent(eventType, payload = {}) {
+    if (!this.telemetryHook) {
+      return;
+    }
+    try {
+      this.telemetryHook({
+        eventType,
+        timestamp: utcNowIso(),
+        sdkName: SDK_NAME,
+        sdkVersion: VERSION,
+        runtime: SDK_RUNTIME,
+        clientSessionId: this.clientSessionId,
+        integrationId: this.integrationId,
+        authSessionId: this._authSessionId,
+        payload: {
+          ...this.telemetryMetadata,
+          ...payload,
+        },
+      });
+    } catch {
+      // Telemetry must never break callers.
+    }
+  }
+
+  _localError(message, category, details = {}) {
+    this._emitEvent(TelemetryEventType.LOCAL_ERROR, {
+      category,
+      message,
+      details,
+    });
+    return new LocalValidationError(message, category, details);
   }
 }
 

@@ -8,7 +8,11 @@ import {
   AgentGovernanceClient,
   AuthenticationError,
   CeroneClient,
+  InteractionMode,
+  LocalErrorCategory,
+  LocalValidationError,
   RateLimitError,
+  TelemetryEventType,
   ValidationError,
   VERSION_STRING,
   inferAgentProfileFromAction,
@@ -20,7 +24,8 @@ function tempTokenPath(name) {
 
 test("exports client alias", () => {
   assert.equal(AgentGovernanceClient, CeroneClient);
-  assert.equal(VERSION_STRING, "0.1.7");
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(VERSION_STRING, pkg.version);
 });
 
 test("inferAgentProfileFromAction builds a file_read-oriented profile", () => {
@@ -84,13 +89,18 @@ test("trial bootstrap persists token and reuses it", async () => {
   assert.equal(usage.remaining, 2399);
   assert.equal(fs.readFileSync(trialTokenPath, "utf8").trim(), "sk_trial_demo");
   assert.equal(calls[0].url, "https://api.homersemantics.com/trial/session");
+  assert.equal(calls[0].options.headers["X-Cerone-Client-Intent"], "sdk_trial_bootstrap_called");
+  assert.equal(calls[0].options.headers["X-Cerone-Interaction-Mode"], InteractionMode.TRIAL_BOOTSTRAP);
   assert.equal(calls[1].options.headers["X-API-Key"], "sk_trial_demo");
+  assert.match(calls[1].options.headers["X-Cerone-Auth-Session"], /^auth_/);
 });
 
 test("createAgent uses AZTP certificate response shape", async () => {
   globalThis.fetch = async (_url, options) => {
     assert.equal(options.headers["X-Cerone-Client-Intent"], "sdk_create_agent_called");
-    assert.equal(options.headers["User-Agent"], "agent-governance-node-sdk/0.1.7");
+    assert.equal(options.headers["User-Agent"], `agent-governance-node-sdk/${VERSION_STRING}`);
+    assert.equal(options.headers["X-Cerone-Runtime"], "node");
+    assert.match(options.headers["X-Cerone-Client-Session"], /^csn_/);
     return fakeResponse(200, {
       certificate: {
         agent_id: "agt_123",
@@ -107,6 +117,60 @@ test("createAgent uses AZTP certificate response shape", async () => {
   const agent = await client.createAgent("Billing support", ["db_read"]);
   assert.equal(agent.agentId, "agt_123");
   assert.equal(agent.trustScore, 0.98);
+});
+
+test("emits structured telemetry events", async () => {
+  const events = [];
+  globalThis.fetch = async (url, options) => {
+    if (url.endsWith("/trial/session")) {
+      return fakeResponse(200, { trial_token: "sk_trial_demo" });
+    }
+    if (url.endsWith("/v1/certificates")) {
+      return fakeResponse(200, {
+        certificate: {
+          agent_id: "agt_telemetry",
+          purpose: "Perform file_read operations to read files from a codebase.",
+          capabilities: ["file_read"],
+          signature: "sig_telemetry",
+          issued_at: "2026-01-01T00:00:00Z",
+        },
+        trust_score: 1,
+      });
+    }
+    if (url.endsWith("/v1/validate")) {
+      return fakeResponse(200, {
+        validation_id: "val_telemetry",
+        result: "approved",
+        semantic_alignment: 0.66,
+        trust_score: 1,
+        violations: [],
+        timestamp: "2026-01-01T00:00:00Z",
+        latency_ms: 10,
+      });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  const client = new CeroneClient({
+    trialTokenPath: tempTokenPath("telemetry"),
+    telemetryHook: (event) => events.push(event),
+    integrationId: "openclaw-plugin",
+  });
+
+  const agent = await client.createAgentForAction("file_read", {
+    workspaceTarget: "repository files",
+  });
+  await client.validate(agent.agentId, "file_read", { path: "README.md" });
+
+  assert.equal(events[0].eventType, TelemetryEventType.CLIENT_INITIALIZED);
+  assert.equal(events[1].eventType, TelemetryEventType.HOSTED_TRIAL_STARTED);
+  assert.equal(events[2].eventType, TelemetryEventType.TRIAL_TOKEN_RECEIVED);
+  assert.equal(events[3].eventType, TelemetryEventType.AGENT_CREATED);
+  assert.equal(events[4].eventType, TelemetryEventType.VALIDATION_ATTEMPTED);
+  assert.equal(events[5].eventType, TelemetryEventType.VALIDATION_RESULT_RECEIVED);
+  assert.equal(events[5].integrationId, "openclaw-plugin");
+  assert.match(events[5].clientSessionId, /^csn_/);
+  assert.match(events[5].authSessionId, /^auth_/);
 });
 
 test("validate normalizes string action and parses response", async () => {
@@ -148,7 +212,10 @@ test("validateBatch rejects empty payload locally", async () => {
   const client = new CeroneClient({ apiKey: "sk_live_demo" });
   await assert.rejects(
     () => client.validateBatch([]),
-    (error) => error instanceof ValidationError && /at least one validation item/.test(error.message),
+    (error) =>
+      error instanceof LocalValidationError &&
+      error.category === LocalErrorCategory.EMPTY_BATCH &&
+      /at least one validation item/.test(error.message),
   );
 });
 
@@ -163,11 +230,24 @@ test("low-level request rejects empty batch payload locally", async () => {
   try {
     await assert.rejects(
       () => client._request("POST", "/v1/validate/batch", { json: { validations: [] } }),
-      (error) => error instanceof ValidationError && /at least one validation item/.test(error.message),
+      (error) =>
+        error instanceof LocalValidationError &&
+        error.category === LocalErrorCategory.EMPTY_BATCH &&
+        /at least one validation item/.test(error.message),
     );
   } finally {
     process.emitWarning = originalEmitWarning;
   }
+});
+
+test("local invalid action errors are categorized", async () => {
+  const client = new CeroneClient({ apiKey: "sk_live_demo" });
+  await assert.rejects(
+    () => client.validate("agt_demo", { parameters: {} }),
+    (error) =>
+      error instanceof LocalValidationError &&
+      error.category === LocalErrorCategory.INVALID_ACTION_SHAPE,
+  );
 });
 
 test("low-level request emits deprecation warning", async () => {

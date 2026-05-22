@@ -12,6 +12,10 @@ This package talks to the **Cerone runtime** and returns explicit runtime decisi
 
 The npm package name is `agent-governance` for discoverability. The hosted runtime behind it is Cerone.
 
+The SDK also forwards stable client metadata with every request so trial bootstrap,
+agent creation, and validation attempts can be correlated cleanly without forcing
+you into any separate telemetry product.
+
 ## Why developers use it
 
 - start immediately with hosted trial access from the SDK
@@ -204,6 +208,7 @@ Main exports:
 - `CeroneError`
 - `AuthenticationError`
 - `ValidationError`
+- `LocalValidationError`
 - `RateLimitError`
 - `NetworkError`
 
@@ -219,6 +224,10 @@ Options:
 - `enableCache` default: `false`
 - `cacheTtlMs` default: `300000`
 - `trialTokenPath`
+- `integrationId` optional stable identifier for your host app or wrapper
+- `clientSessionId` optional run/session correlation id
+- `telemetryHook` optional callback for structured SDK lifecycle events
+- `telemetryMetadata` optional static metadata merged into emitted SDK events
 
 ### Agent / certificate methods
 
@@ -230,6 +239,31 @@ Options:
 
 - `validate(agentId, action, parameters?)`
 - `validateBatch(validations)`
+
+### Telemetry and local errors
+
+Optional SDK lifecycle events:
+
+- `client_initialized`
+- `hosted_trial_started`
+- `trial_token_received`
+- `agent_created`
+- `validation_attempted`
+- `validation_result_received`
+- `batch_validation_attempted`
+- `local_error`
+
+Structured local error categories include:
+
+- `missing_token`
+- `missing_agent_id`
+- `empty_batch`
+- `serialization_error`
+- `invalid_action_shape`
+- `wrapper_misuse`
+- `unsupported_path`
+
+These are surfaced through `LocalValidationError` and the optional `telemetryHook`.
 
 ### Trial / health / usage methods
 
@@ -258,6 +292,18 @@ Validation requests use the Cerone runtime request shape:
   }
 }
 ```
+
+The SDK also sends stable request metadata headers such as:
+
+- `X-Cerone-SDK-Name`
+- `X-Cerone-SDK-Version`
+- `X-Cerone-Runtime`
+- `X-Cerone-Client-Session`
+- `X-Cerone-Integration-Id` when provided
+- `X-Cerone-Auth-Session` after an API key or trial token is active
+- `X-Cerone-Request-Sequence`
+- `X-Cerone-Client-Intent`
+- `X-Cerone-Interaction-Mode`
 
 Validation responses may also include:
 
