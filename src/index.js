@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const VERSION = "0.1.9";
+const VERSION = "0.1.10";
 const SDK_NAME = "agent-governance-node-sdk";
 const SDK_RUNTIME = "node";
 const DEFAULT_BASE_URL = "https://api.homersemantics.com";

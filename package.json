@@ -1,7 +1,7 @@
 {
   "name": "agent-governance",
   "version": "0.1.10",
-  "description": "Cerone JavaScript SDK for runtime agent governance.",
+  "description": "JavaScript SDK for checking AI agent actions before they run.",
   "type": "module",
   "main": "./src/index.js",
   "types": "./src/index.d.ts",

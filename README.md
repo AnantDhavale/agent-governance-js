@@ -1,29 +1,42 @@
 # agent-governance
 
-**Cerone runtime agent governance for AI agents in JavaScript and Node.**
+**Check AI agent actions before they run.**
 
-Install it. Create an agent. Validate a real action. Get a live governance decision in minutes.
+`agent-governance` is the JavaScript / Node SDK for **Cerone**.
 
-This package talks to the **Cerone runtime** and returns explicit runtime decisions before an action executes:
+It lets you give an agent a declared purpose and capabilities, then ask Cerone
+for a runtime decision before a tool call executes:
 
 - `approved`
 - `flagged`
 - `rejected`
 
-The npm package name is `agent-governance` for discoverability. The hosted runtime behind it is Cerone.
+Use it when your agent is about to do something real:
 
-The SDK also forwards stable client metadata with every request so trial bootstrap,
-agent creation, and validation attempts can be correlated cleanly without forcing
-you into any separate telemetry product.
+- read or write files
+- call internal APIs
+- query a database
+- perform support, billing, or ops actions
+- run tools on behalf of users
 
-## Why developers use it
+The npm package name is `agent-governance` for discoverability. The hosted
+runtime behind it is Cerone.
 
-- start immediately with hosted trial access from the SDK
-- validate agent actions before they execute
+---
+
+## Why Developers Install It
+
+- validate agent tool calls before execution
 - keep your own OpenAI, Anthropic, or other model key
-- add runtime governance without replacing the rest of your stack
-- get real decisions instead of vague policy claims
-- use a lean trust layer instead of a heavy platform rewrite
+- catch actions that do not fit the agent's declared purpose
+- detect suspicious or unsafe action payloads early
+- add identity, trust, and audit signals without replacing your stack
+- start immediately from a hosted trial
+
+Cerone is not a model proxy. It sits around agent actions, not between you and
+your LLM provider.
+
+---
 
 ## Install
 
@@ -31,9 +44,12 @@ you into any separate telemetry product.
 npm install agent-governance
 ```
 
-Node 18+ is required because the SDK uses the built-in `fetch` and `AbortController`.
+Node `18+` is required because the SDK uses built-in `fetch` and
+`AbortController`.
 
-## Quick start
+---
+
+## Quick Start
 
 ```js
 import { CeroneClient } from "agent-governance";
@@ -41,7 +57,7 @@ import { CeroneClient } from "agent-governance";
 const client = new CeroneClient();
 
 const agent = await client.createAgentForAction("file_read", {
-  workspaceTarget: "repository files and source code",
+  workspaceTarget: "repository files such as README.md",
   environment: "development",
 });
 
@@ -56,9 +72,73 @@ console.log("Decision:", result.result);
 console.log("Trust:", result.trustScore);
 ```
 
-## Hosted trial and access
+What happens here:
 
-If you do not pass an API key, the SDK automatically bootstraps a hosted trial token by calling:
+1. Cerone creates an agent identity with declared purpose and capabilities.
+2. Your app asks Cerone to validate a real action.
+3. Cerone returns a runtime decision before that action is executed.
+
+---
+
+## A More Typical Example
+
+```js
+import { CeroneClient } from "agent-governance";
+
+const client = new CeroneClient();
+
+const agent = await client.createAgent(
+  "Answer customer billing questions and look up billing records.",
+  ["db_read", "billing_api"],
+  { environment: "development" },
+);
+
+const result = await client.validate(
+  agent.agentId,
+  "database_query",
+  { table: "billing", customer_id: "123" },
+);
+
+console.log(result.result, result.trustScore);
+```
+
+The intended flow is simple:
+
+- `approved` -> continue
+- `flagged` -> review or warn according to your app policy
+- `rejected` -> block execution
+
+---
+
+## Purpose Fidelity Matters
+
+Cerone works best when the declared purpose actually matches what the agent is
+doing.
+
+If you are wrapping common tools like `file_read`, avoid vague purpose text.
+`createAgentForAction(...)` exists to help you get to a stronger first-run
+agent profile more quickly.
+
+```js
+import { CeroneClient } from "agent-governance";
+
+const client = new CeroneClient();
+
+const agent = await client.createAgentForAction("file_read", {
+  workspaceTarget: "repository files such as README.md",
+  environment: "development",
+});
+```
+
+If you already know exactly what the agent is for, pass an explicit purpose and
+capability set yourself.
+
+---
+
+## Hosted Trial and Access
+
+If you do not pass an API key, the SDK can bootstrap a hosted trial token
+automatically by calling:
 
 - `POST /trial/session`
 
@@ -72,12 +152,14 @@ Protected API routes still use:
 
 Current access paths:
 
-1. Hosted trial
+### 1. Hosted trial
+
 - no manual signup required to begin evaluation
 - designed for testing, demos, and first integrations
 - if the trial is exhausted, contact us for persistent access
 
-2. Persistent access
+### 2. Persistent access
+
 - use a provisioned key for POCs, pilots, and production environments
 
 Support:
@@ -90,9 +172,11 @@ Hosted service terms:
 - [TERMS_OF_SERVICE.md](https://github.com/AnantDhavale/agent-governance-js/blob/main/TERMS_OF_SERVICE.md)
 - [PRIVACY.md](https://github.com/AnantDhavale/agent-governance-js/blob/main/PRIVACY.md)
 
-## What this SDK does
+---
 
-It is a thin Node client for the hosted Cerone runtime. It can:
+## What This SDK Does
+
+This is a thin Node client for the hosted Cerone runtime. It can:
 
 - create root agents
 - create root agents from a real action with inferred purpose/capability framing
@@ -103,72 +187,15 @@ It is a thin Node client for the hosted Cerone runtime. It can:
 - issue delegated tokens
 - verify and revoke delegated tokens
 
-The goal is to keep the client side light while identity, validation, trust, governance, and audit logic stay centralized in the Cerone runtime.
+The goal is to keep the client side light while identity, validation, trust,
+and audit logic stay centralized in Cerone.
 
-## Runtime policy and containment
+---
 
-Cerone is also evolving into a stronger runtime policy layer, not just an
-identity and semantic-alignment layer.
+## Single Validation vs Batch Validation
 
-The current direction includes runtime detections for patterns such as:
-
-- prompt injection
-- instruction override
-- role manipulation
-- policy evasion
-- secret harvesting
-- data exfiltration
-- obfuscation and encoded payload tricks
-
-These checks are meant to complement semantic validation:
-
-- semantic alignment asks whether the action fits the declared purpose
-- runtime policy checks ask whether the action payload itself looks unsafe,
-  manipulative, evasive, or exfiltration-oriented
-
-Cerone also has an operator-controlled containment direction:
-
-- manual kill switch support
-- soft containment
-- hard containment
-
-Important:
-
-- detection does not automatically activate containment by default
-- the intended default behavior is operator-controlled, manual activation
-
-For integrators, the practical rule remains simple:
-
-- `approved` -> continue
-- `flagged` -> review or warn according to your app policy
-- `rejected` -> block execution
-
-## Single action vs batch validation
-
-Start with `validate(...)` for a single action. Use `validateBatch([...])` only when you already have two or more validation items to send together.
-
-Single action:
-
-```js
-import { CeroneClient } from "agent-governance";
-
-const client = new CeroneClient();
-
-const agent = await client.createAgentForAction("file_read", {
-  workspaceTarget: "repository files and source code",
-  environment: "development",
-});
-
-const result = await client.validate(
-  agent.agentId,
-  "file_read",
-  { path: "README.md" },
-);
-
-console.log(result.result, result.trustScore);
-```
-
-Batch validation:
+Start with `validate(...)` for one action. Use `validateBatch([...])` only when
+you already have multiple validation items to send together.
 
 ```js
 import { CeroneClient } from "agent-governance";
@@ -197,7 +224,10 @@ for (const item of results) {
 }
 ```
 
-If you call `validateBatch([])`, the SDK raises a local error before making a request.
+If you call `validateBatch([])`, the SDK raises a local error before making a
+request.
+
+---
 
 ## API
 
@@ -229,7 +259,7 @@ Options:
 - `telemetryHook` optional callback for structured SDK lifecycle events
 - `telemetryMetadata` optional static metadata merged into emitted SDK events
 
-### Agent / certificate methods
+### Agent methods
 
 - `createAgent(purpose, capabilities?, options?)`
 - `createAgentForAction(action, options?)`
@@ -240,7 +270,21 @@ Options:
 - `validate(agentId, action, parameters?)`
 - `validateBatch(validations)`
 
-### Telemetry and local errors
+### Trial / health / usage methods
+
+- `healthCheck()`
+- `getUsage()`
+- `ensureApiKey()`
+
+### Delegated token methods
+
+- `delegateToken(options)`
+- `verifyToken(accessToken, options?)`
+- `revokeToken(accessToken)`
+
+---
+
+## Telemetry and Local Errors
 
 Optional SDK lifecycle events:
 
@@ -263,38 +307,12 @@ Structured local error categories include:
 - `wrapper_misuse`
 - `unsupported_path`
 
-These are surfaced through `LocalValidationError` and the optional `telemetryHook`.
-
-### Trial / health / usage methods
-
-- `healthCheck()`
-- `getUsage()`
-- `ensureApiKey()`
-
-### Delegated token methods
-
-- `delegateToken(options)`
-- `verifyToken(accessToken, options?)`
-- `revokeToken(accessToken)`
-
-## Request shape
-
-Validation requests use the Cerone runtime request shape:
-
-```json
-{
-  "agent_id": "agt_...",
-  "action": {
-    "tool": "database_query",
-    "parameters": {
-      "table": "billing"
-    }
-  }
-}
-```
+These are surfaced through `LocalValidationError` and the optional
+`telemetryHook`.
 
 The SDK also sends stable request metadata headers such as:
 
+- `User-Agent: agent-governance-node-sdk/<version>`
 - `X-Cerone-SDK-Name`
 - `X-Cerone-SDK-Version`
 - `X-Cerone-Runtime`
@@ -305,48 +323,29 @@ The SDK also sends stable request metadata headers such as:
 - `X-Cerone-Client-Intent`
 - `X-Cerone-Interaction-Mode`
 
-Validation responses may also include:
+---
 
-- `environmentMode`
-- `note`
-- `hint`
-- `trialWarning`
-- `trialStoploss`
+## Bring Your Own Model Key
 
-The SDK normalizes repeated semantic-drift wording in `violations` so application-facing error text is cleaner.
+Cerone validates agent behaviour. It does not replace your inference provider.
 
-## Runtime headers
+You keep your own OpenAI, Anthropic, or other provider key and send model calls
+through your normal stack. Cerone checks intended actions and returns runtime
+decisions around those actions.
 
-The SDK sends telemetry headers including:
-
-- `User-Agent: agent-governance-node-sdk/<version>`
-- `X-Cerone-SDK-Name`
-- `X-Cerone-SDK-Version`
-- `X-Cerone-Platform`
-- `X-Cerone-Client-Intent`
-
-## Bring your own model key
-
-Cerone governs agent behavior, not inference.
-
-You keep your own OpenAI, Anthropic, or other provider key and pass it directly to your model calls. Cerone validates the intended action and records the governance trail, but it does not sit in the middle of your model billing path.
+---
 
 ## Other SDKs
 
-Cerone now has more than one SDK surface.
+Current Cerone SDK surfaces:
 
-Current SDKs:
-
-- **Node / JavaScript SDK**
+- **Node / JavaScript**
   - package: `agent-governance`
   - repo: [github.com/AnantDhavale/agent-governance-js](https://github.com/AnantDhavale/agent-governance-js)
 
-- **Python SDK**
+- **Python**
   - package: `cerone`
   - repo: [github.com/AnantDhavale/cerone_sdk](https://github.com/AnantDhavale/cerone_sdk)
-
-The product name is **Cerone** across both SDKs.  
-The npm package uses the name `agent-governance` for discoverability.
 
 If you are building in Node:
 
@@ -360,8 +359,10 @@ If you are building in Python:
 pip install cerone
 ```
 
+---
+
 ## Notes
 
-- this package is server-side Node code
+- this package is for server-side Node code
 - do not expose your Cerone API key in browser bundles
 - for enterprise or persistent access, contact `info@homersemantics.com`
