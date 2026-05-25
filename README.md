@@ -242,7 +242,7 @@ Main exports:
 - `RateLimitError`
 - `NetworkError`
 
-### `new CeroneClient(options?)`
+### `new CeroneClient([options])`
 
 Options:
 
@@ -261,13 +261,13 @@ Options:
 
 ### Agent methods
 
-- `createAgent(purpose, capabilities?, options?)`
-- `createAgentForAction(action, options?)`
-- `spawnAgent(parentId, purpose, capabilities?, options?)`
+- `createAgent(purpose, [capabilities], [options])`
+- `createAgentForAction(action, [options])`
+- `spawnAgent(parentId, purpose, [capabilities], [options])`
 
 ### Validation methods
 
-- `validate(agentId, action, parameters?)`
+- `validate(agentId, action, [parameters])`
 - `validateBatch(validations)`
 
 ### Trial / health / usage methods
@@ -279,7 +279,7 @@ Options:
 ### Delegated token methods
 
 - `delegateToken(options)`
-- `verifyToken(accessToken, options?)`
+- `verifyToken(accessToken, [options])`
 - `revokeToken(accessToken)`
 
 ---
