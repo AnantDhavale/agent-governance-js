@@ -1,6 +1,6 @@
 {
   "name": "agent-governance",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "JavaScript SDK for checking AI agent actions before they run.",
   "type": "module",
   "main": "./src/index.js",
