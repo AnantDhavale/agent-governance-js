@@ -47,6 +47,19 @@ npm install agent-governance
 Node `18+` is required because the SDK uses built-in `fetch` and
 `AbortController`.
 
+## Once The Trial Starts, Do This Next
+
+Do not stop at trial bootstrap.
+
+Go immediately to the first value path:
+
+1. Create your first agent with a real purpose and capability set.
+2. Validate one real action your app or tool wrapper actually wants to run.
+3. Inspect the decision: `approved`, `flagged`, or `rejected`.
+
+If you only acquire a hosted trial token but never create an agent or validate
+an action, you have not actually tested Cerone yet.
+
 ---
 
 ## Quick Start
